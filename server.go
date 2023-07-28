@@ -1,62 +1,73 @@
 package nihility
 
 import (
-	"net/http"
+	"context"
+	"github.com/nothingZero/nihility/registry"
+	"google.golang.org/grpc"
+	"net"
+	"time"
 )
 
-type HandleFunc func(ctx *Context)
+type ServerOptions func(server *Server)
 
-type Server interface {
-	http.Handler
-
-	// Start 启动服务器
-	Start(add string) error
-
-	AddRoute(method string, path string, handler HandleFunc)
+type Server struct {
+	name            string
+	registry        registry.Registry
+	registryTimeout time.Duration
+	*grpc.Server
+	listener net.Listener
 }
 
-type HTTPServer struct {
-}
-
-var _ Server = &HTTPServer{}
-
-// ServeHTTP HTTpServer 处理请求入口
-func (s *HTTPServer) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
-	ctx := &Context{
-		Request: request,
-		Writer:  writer,
+func InitServer(name string, opts ...ServerOptions) (*Server, error) {
+	res := &Server{
+		name:   name,
+		Server: grpc.NewServer(),
 	}
-	s.serve(ctx)
+	for _, opt := range opts {
+		opt(res)
+	}
+	return res, nil
 }
 
-func (s *HTTPServer) Start(add string) error {
-	return http.ListenAndServe(add, s)
+func WithRegister(r registry.Registry) ServerOptions {
+	return func(server *Server) {
+		server.registry = r
+	}
 }
 
-func (s *HTTPServer) GET(path string, handler HandleFunc) {
-	s.AddRoute(http.MethodGet, path, handler)
+// Start 服务已经准备好
+func (s *Server) Start(addr string) error {
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	s.listener = listener
+	// 有注册中心
+	if s.registry != nil {
+		// 超时时间
+		ctx, cancel := context.WithTimeout(context.Background(), s.registryTimeout)
+		defer cancel()
+		// 注册
+		err = s.registry.Register(ctx, registry.ServiceInstance{
+			Name:    s.name,
+			Address: listener.Addr().String(),
+		})
+		if err != nil {
+			return err
+		}
+	}
+	err = s.Serve(listener)
+	return err
+
 }
 
-func (s *HTTPServer) POST(path string, handler HandleFunc) {
-	s.AddRoute(http.MethodPost, path, handler)
-}
-
-func (s *HTTPServer) PUT(path string, handler HandleFunc) {
-	s.AddRoute(http.MethodPut, path, handler)
-}
-
-func (s *HTTPServer) DELETE(path string, handler HandleFunc) {
-	s.AddRoute(http.MethodDelete, path, handler)
-}
-
-func (s *HTTPServer) OPTIONS(path string, handler HandleFunc) {
-	s.AddRoute(http.MethodOptions, path, handler)
-}
-
-func (s *HTTPServer) AddRoute(method string, path string, handler HandleFunc) {
-
-}
-
-func (s *HTTPServer) serve(ctx *Context) {
-
+func (s *Server) Close() error {
+	if s.registry != nil {
+		err := s.registry.Close()
+		if err != nil {
+			return err
+		}
+	}
+	s.GracefulStop()
+	return nil
 }
