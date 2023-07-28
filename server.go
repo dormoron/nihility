@@ -20,8 +20,9 @@ type Server struct {
 
 func InitServer(name string, opts ...ServerOptions) (*Server, error) {
 	res := &Server{
-		name:   name,
-		Server: grpc.NewServer(),
+		name:            name,
+		Server:          grpc.NewServer(),
+		registryTimeout: time.Second * 10,
 	}
 	for _, opt := range opts {
 		opt(res)
