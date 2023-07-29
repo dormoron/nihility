@@ -20,4 +20,6 @@ type ServiceInstance struct {
 	Address string
 }
 
-type Event struct{}
+type Event struct {
+	Type string
+}
